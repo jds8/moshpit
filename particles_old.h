@@ -28,29 +28,33 @@
 #define BLACK   0    // Passive mosher tag
 #define RED     1    // Active mosher tag
 
-typedef struct particle_t {
-    float xx;
-    float xy;
-    float vx;
-    float vy;
-    float fx;
-    float fy;
-    int type;
-    struct particle_t* next;
-} particle_t;
-
 typedef struct particles_t {
     int nbinx;           // Number of bins per direction
     int N;               // Number of particles
     float L;             // Domain size
-    particle_t* restrict particles; // Particle_ts
-    particle_t** restrict bins;    // First particle_t in bin[i]
+    float* restrict x;   // Positions
+    float* restrict v;   // Velocities
+    float* restrict f;   // Forces
+    int* restrict type;  // Particle types
+    int* restrict cells; // Neighbor lists
+    int* restrict next;  // Next pointers
 } particles_t;
 
+/*typedef struct grid_t {
+    int N;               // Number of particles
+    float L;
+    int nbinx;           // Number of bins in a row
+    cell_t* cells;       // Cells
+}
+
 typedef struct cell_t {
-    int current_index; // Next index to append to 
-    particle_t* restrict parts; // Particles in this bin
-} cell_t;
+    int size;               // Expected max number of particles
+    int index;
+    float* restrict x;   // Positions
+    float* restrict v;   // Velocities
+    float* restrict f;   // Forces
+    int* restrict type;  // Particle types
+} cell_t;*/
 
 /**
  * ## Particle structure memory management
@@ -59,10 +63,23 @@ typedef struct cell_t {
 particles_t* alloc_particles_t(int nbinx, int N, float L);
 void         free_particles_t(particles_t* particles);
 
-cell_t* alloc_cells(int nbinx, int N);
-void free_cells(cell_t*, int nbinx);
+/*
+ * ## Cell structure memory management
+ */
 
-void copy_cells(cell_t* cells, particles_t* particles);
+/*cell_t* alloc_cells(int nbinx, int size);
+
+cell_t* alloc_cell_t(int size, int index);
+void         free_cell_t(cell_t* cell);*/
+
+/*
+ * ## Grid structure memory management
+ */
+
+/*grid_t* alloc_grid_t(int nbinx, int N, float L);
+void         free_cells_of(grid_t* grid);
+void         free_grid_t(grid_t* grid);*/
+
 
 /**
  * ## Particle structure initialization
@@ -78,6 +95,8 @@ void copy_cells(cell_t* cells, particles_t* particles);
 void init_ric   (particles_t* particles, float speed);
 void init_circle(particles_t* particles, float speed);
 
+/*void init_ric   (grid_t* grid, float speed);
+void init_circle(grid_t* grid, float speed);*/
 
 
 /**

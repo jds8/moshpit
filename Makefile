@@ -2,8 +2,8 @@
 CC = gcc
 EXE = mosher
 OBJS =  main.o myrand.o particles.o physics.o
-CFLAGS = -O3 -Wall -g
-LDFLAGS = -g
+CFLAGS = -O3 -Wall -g -std=gnu99 -fopenmp
+LDFLAGS = -g -fopenmp
 LIBS = -lm
 
 # default super-target

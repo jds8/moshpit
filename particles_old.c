@@ -31,15 +31,23 @@ particles_t* alloc_particles_t(int nbinx, int N, float L)
     p->nbinx = nbinx;
     p->N = N;
     p->L = L;
-    p->particles = (particle_t*) calloc(N, sizeof(particle_t));
-    p->bins = (particle_t**) calloc(size_total, sizeof(particle_t*));
+    p->type =  (int*)   calloc(  N, sizeof(int));
+    p->x =     (float*) calloc(2*N, sizeof(float));
+    p->v =     (float*) calloc(2*N, sizeof(float));
+    p->f =     (float*) calloc(2*N, sizeof(float));
+    p->next =  (int*)   calloc(  N, sizeof(int));
+    p->cells = (int*)   calloc(size_total, sizeof(int));
     return p;
 }
 
+
 void free_particles_t(particles_t* p)
 {
-    free(p->particles);
-    free(p->bins);
+    free(p->cells);
+    free(p->next);
+    free(p->f);
+    free(p->v);
+    free(p->type);
     free(p);
 }
 
@@ -57,83 +65,25 @@ void free_particles_t(particles_t* p)
 
 void compute_nbr_lists(particles_t* particles)
 {
-    particle_t* restrict part = particles->particles;
-    particle_t** restrict bins = particles->bins;
+    int* restrict cells = particles->cells;
+    int* restrict next  = particles->next;
+    float* restrict x = particles->x;
     float L = particles->L;
     int N = particles->N;
     int nbinx = particles->nbinx;
 
-    #pragma omp simd
-    for (int i=0; i<nbinx*nbinx; i++) {
-        bins[i] = NULL;
-    }
-    
+    // Recompute neighbor list
+    const int size_total = nbinx*nbinx;
+    memset(cells, -1, size_total * sizeof(int));
     for (int i=0; i<N; i++) {
-        // Gets bin
-        int binx = coord_to_index(part[i].xx, nbinx, L);
-        int biny = coord_to_index(part[i].xy, nbinx, L);
-        int b = binx + biny*nbinx;
-        part[i].next = bins[b];
-        bins[b] = &(part[i]);
+        int binx = coord_to_index(x[2*i+0], nbinx, L);
+        int biny = coord_to_index(x[2*i+1], nbinx, L);
+        int t = binx + biny*nbinx;
+        next[i] = cells[t];
+        cells[t] = i;
     }
 }
 
-cell_t* alloc_cells(int nbinx, int N) {
-    cell_t* cells = malloc(nbinx*nbinx*sizeof(cell_t));
-    for (int i=0; i<nbinx*nbinx; i++) {
-        cells[i].parts = malloc(N*sizeof(particle_t));
-        cells[i].current_index = 0;
-    }
-    return cells;
-}
-
-void free_cells(cell_t* cells, int nbinx) {
-    for (int i=0; i<nbinx*nbinx; i++) {
-        free(cells[i].parts);
-    }
-    free(cells);
-}
-
-void copy_cells(cell_t* cells, particles_t* particles)
-{
-    particle_t* restrict part = particles->particles;
-    particle_t** restrict bins = particles->bins;
-    float L = particles->L;
-    int N = particles->N;
-    int nbinx = particles->nbinx;
-
-    #pragma omp simd
-    for (int i=0; i<nbinx*nbinx; i++) {
-        cells[i].current_index = 0;
-        bins[i] = NULL;
-    }
-    
-    for (int i=0; i<N; i++) {
-        // Gets bin
-        int binx = coord_to_index(part[i].xx, nbinx, L);
-        int biny = coord_to_index(part[i].xy, nbinx, L);
-        int b = binx + biny*nbinx;
-        
-        // Gets current available index for this cell
-        int current_index = cells[b].current_index;
-
-        // Sets particle's next to the current head of cell
-        // NULL if cell is empty
-        if (current_index == 0) {
-            part[i].next = NULL;
-        }
-        else {
-            part[i].next = &(cells[b].parts[current_index]);
-        }
-
-        // Updates index; Puts particle into next slot in cell
-        cells[b].current_index += 1;
-        current_index += 1;
-        memcpy(&(cells[b].parts[current_index]), &(part[i]), sizeof(part[i]));
-        part[i].next = bins[b];
-        bins[b] = &(part[i]);
-    }
-}
 
 /**
  * ## Initialization
@@ -149,25 +99,26 @@ void copy_cells(cell_t* cells, particles_t* particles)
 
 void init_ric(particles_t* particles, float speed)
 {
-    particle_t* part = particles->particles;
+    float* restrict x = particles->x;
+    float* restrict v = particles->v;
+    int* restrict type = particles->type;
     int N = particles->N;
     float L = particles->L;
 
-    //#pragma omp for
     for (int i=0; i<N; i++) {
         float t = 2*M_PI*ran_ran2();
 
-        part[i].xx = L*ran_ran2();
-        part[i].xy = L*ran_ran2();
+        x[2*i+0] = L*ran_ran2();
+        x[2*i+1] = L*ran_ran2();
 
         if (ran_ran2() > 0.16){
-            part[i].vx = 0.0;
-            part[i].vy = 0.0;
-            part[i].type = BLACK;
+            v[2*i+0] = 0.0;
+            v[2*i+1] = 0.0;
+            type[i] = BLACK;
         } else {
-            part[i].vx = speed * sin(t);
-            part[i].vy = speed * cos(t);
-            part[i].type = RED;
+            v[2*i+0] = speed * sin(t);
+            v[2*i+1] = speed * cos(t);
+            type[i] = RED;
         }
     }
 }
@@ -175,34 +126,35 @@ void init_ric(particles_t* particles, float speed)
 
 void init_circle(particles_t* particles, float speed)
 {
-    particle_t* part = particles->particles;
+    float* restrict x = particles->x;
+    float* restrict v = particles->v;
+    int* restrict type = particles->type;
     int N = particles->N;
     float L = particles->L;
     
-    //#pragma omp for
     for (int i=0; i<N; i++){
         float tx = L*ran_ran2();
         float ty = L*ran_ran2();
         float tt = 2*M_PI*ran_ran2();
 
-        part[i].xx = tx;
-        part[i].xy = ty;
+        x[2*i+0] = tx;
+        x[2*i+1] = ty;
 
         // the radius for which 30% of the particles are red on avg
         float dd2 = (tx-L/2)*(tx-L/2) + (ty-L/2)*(ty-L/2);
         float rad2 = 0.16*L*L / M_PI;
 
         if (dd2 < rad2)
-            part[i].type = RED;
+            type[i] = RED;
         else
-            part[i].type = BLACK;
+            type[i] = BLACK;
 
-        if (part[i].type == RED) {
-            part[i].vx = speed*cos(tt);
-            part[i].vy = speed*sin(tt);
+        if (type[i] == RED) {
+            v[2*i+0] = speed*cos(tt);
+            v[2*i+1] = speed*sin(tt);
         } else {
-            part[i].vx = 0.0;
-            part[i].vy = 0.0;
+            v[2*i+0] = 0.0;
+            v[2*i+1] = 0.0;
         }
     }
 }
@@ -236,13 +188,15 @@ FILE* start_frames(const char* fname)
 
 void write_frame(FILE* fp, particles_t* particles)
 {
-    particle_t* part = particles->particles;
+    float* x = particles->x;
+    float* v = particles->v;
+    int* tag = particles->type;
     int n = particles->N;
     float L = particles->L;
     for (int i = 0; i < n; ++i) {
-        fprintf(fp, "%d,%d,%g,%g,%g,%g\n", part[i].type, i+1,
-                part[i].xx/L, part[i].xy/L,
-                part[i].vx/L, part[i].vy/L);
+        fprintf(fp, "%d,%d,%g,%g,%g,%g\n", tag[i], i+1,
+                x[2*i+0]/L, x[2*i+1]/L,
+                v[2*i+0]/L, v[2*i+1]/L);
     }
 }
 
@@ -251,4 +205,3 @@ void end_frames(FILE* fp)
 {
     fclose(fp);
 }
-

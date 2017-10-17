@@ -8,6 +8,8 @@
 #include <float.h>
 #include <math.h>
 #include <unistd.h>
+#include <time.h>
+#include <omp.h>
 
 //ldoc
 /**
@@ -25,11 +27,14 @@ void simulate(sim_param_t* params,   // Physics parameters
               float tfinal,          // End time
               float dt)              // Time step
 {
+    //#pragma omp parallel
+    //{
     float radius     = params->radius;
     float L          = 1.03*sqrtf(M_PI*radius*radius*N);
     int   nbinx      = (int) (L/(4*radius));
 
     particles_t* particles = alloc_particles_t(nbinx, N, L);
+    cell_t* cells = alloc_cells(nbinx, N);
     if (strcmp(ic_name, "ric") == 0)
         init_ric(particles, params->vhappy);
     else
@@ -37,16 +42,25 @@ void simulate(sim_param_t* params,   // Physics parameters
 
     FILE* fp = start_frames("particles.csv");
     int frames = 0;
+    int relocate_time = 1;
     for (float t=0.0; t < tfinal; t += dt) {
         if (rendert > 0 && frames % rendert == 0)
             write_frame(fp, particles);
-        compute_nbr_lists(particles);
+        if (relocate_time % 10 == 0) {
+            copy_cells(cells, particles);
+        }
+        else {
+            compute_nbr_lists(particles);
+        }
         compute_forces(particles, params);
         leapfrog_step(particles, dt);
         ++frames;
+        ++relocate_time;
     }
     end_frames(fp);
     free_particles_t(particles);
+    free_cells(cells, nbinx);
+    //}
 }
 
 /**
@@ -58,6 +72,9 @@ void simulate(sim_param_t* params,   // Physics parameters
 
 int main(int argc, char **argv)
 {
+    double ostart, oend;
+    ostart = omp_get_wtime();
+
     sim_param_t params;
     set_default_params(&params);
     const char* ic_name = "circle";
@@ -112,6 +129,9 @@ int main(int argc, char **argv)
 
     ran_seed(seed);
     simulate(&params, ic_name, N, rendert, tfinal, dt);
+
+    oend = omp_get_wtime();
+    printf("Total Time: %f\n", oend-ostart);
 
     return 0;
 }

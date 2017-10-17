@@ -63,73 +63,19 @@ void compute_nbr_lists(particles_t* particles)
     int N = particles->N;
     int nbinx = particles->nbinx;
 
+    // Recompute neighbor list
+    /*const int size_total = nbinx*nbinx;
+    memset(bins, 0, size_total * sizeof(int));*/
+    
     #pragma omp simd
     for (int i=0; i<nbinx*nbinx; i++) {
         bins[i] = NULL;
     }
     
     for (int i=0; i<N; i++) {
-        // Gets bin
         int binx = coord_to_index(part[i].xx, nbinx, L);
         int biny = coord_to_index(part[i].xy, nbinx, L);
         int b = binx + biny*nbinx;
-        part[i].next = bins[b];
-        bins[b] = &(part[i]);
-    }
-}
-
-cell_t* alloc_cells(int nbinx, int N) {
-    cell_t* cells = malloc(nbinx*nbinx*sizeof(cell_t));
-    for (int i=0; i<nbinx*nbinx; i++) {
-        cells[i].parts = malloc(N*sizeof(particle_t));
-        cells[i].current_index = 0;
-    }
-    return cells;
-}
-
-void free_cells(cell_t* cells, int nbinx) {
-    for (int i=0; i<nbinx*nbinx; i++) {
-        free(cells[i].parts);
-    }
-    free(cells);
-}
-
-void copy_cells(cell_t* cells, particles_t* particles)
-{
-    particle_t* restrict part = particles->particles;
-    particle_t** restrict bins = particles->bins;
-    float L = particles->L;
-    int N = particles->N;
-    int nbinx = particles->nbinx;
-
-    #pragma omp simd
-    for (int i=0; i<nbinx*nbinx; i++) {
-        cells[i].current_index = 0;
-        bins[i] = NULL;
-    }
-    
-    for (int i=0; i<N; i++) {
-        // Gets bin
-        int binx = coord_to_index(part[i].xx, nbinx, L);
-        int biny = coord_to_index(part[i].xy, nbinx, L);
-        int b = binx + biny*nbinx;
-        
-        // Gets current available index for this cell
-        int current_index = cells[b].current_index;
-
-        // Sets particle's next to the current head of cell
-        // NULL if cell is empty
-        if (current_index == 0) {
-            part[i].next = NULL;
-        }
-        else {
-            part[i].next = &(cells[b].parts[current_index]);
-        }
-
-        // Updates index; Puts particle into next slot in cell
-        cells[b].current_index += 1;
-        current_index += 1;
-        memcpy(&(cells[b].parts[current_index]), &(part[i]), sizeof(part[i]));
         part[i].next = bins[b];
         bins[b] = &(part[i]);
     }

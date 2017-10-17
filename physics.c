@@ -6,7 +6,6 @@
 #include <float.h>
 #include <math.h>
 
-
 /**
  * # Physics implementation
  *
@@ -87,104 +86,102 @@ void compute_forces(particles_t* particles, sim_param_t* params)
     const float FR  = 2*R;
     const float FR2 = FR*FR;
 
-    int* restrict cells = particles->cells;
-    int* restrict next = particles->next;
-    float* restrict x = particles->x;
-    float* restrict v = particles->v;
-    float* restrict f = particles->f;
-    int* restrict type = particles->type;
+    particle_t** restrict bins = particles->bins;
+    particle_t* restrict part = particles->particles;
 
-    int N = particles->N;
     int nbinx = particles->nbinx;
     float L = particles->L;
 
-    for (int i=0; i<N; ++i) {
-        float fx = 0.0;
-        float fy = 0.0;
-        float wx = 0.0;
-        float wy = 0.0;
-        float xi = x[2*i+0];
-        float yi = x[2*i+1];
-        int is_redi = (type[i] == RED);
+    //#pragma omp for
+    for (int i=0; i<nbinx*nbinx; i++) {
+        for (particle_t* pt=bins[i]; pt!=NULL; pt=pt->next) {
+            float fx = 0.0;
+            float fy = 0.0;
+            float wx = 0.0;
+            float wy = 0.0;
+            float xi = part[i].xx;
+            float yi = part[i].xy;
+            int is_redi = (part[i].type == RED);
 
-        int binx = coord_to_index(xi, nbinx, L);
-        int biny = coord_to_index(yi, nbinx, L);
+            int binx = coord_to_index(xi, nbinx, L);
+            int biny = coord_to_index(yi, nbinx, L);
 
-        for (int ix=-1; ix<=1; ++ix) {
-        for (int iy=-1; iy<=1; ++iy) {
+            for (int ix=-1; ix<=1; ++ix) {
+            for (int iy=-1; iy<=1; ++iy) {
 
-            int imagex, imagey;
-            int jx = mod_rvec(binx+ix,nbinx,&imagex);
-            int jy = mod_rvec(biny+iy,nbinx,&imagey);
+                int imagex, imagey;
+                int jx = mod_rvec(binx+ix,nbinx,&imagex);
+                int jy = mod_rvec(biny+iy,nbinx,&imagey);
 
-            int ind = jx + jy*nbinx;
-            float xic = xi - (!imagex ? 0.0 : L*ix);
-            float yic = yi - (!imagey ? 0.0 : L*iy);
+                int ind = jx + jy*nbinx;
+                float xic = xi - (!imagex ? 0.0 : L*ix);
+                float yic = yi - (!imagey ? 0.0 : L*iy);
 
-            for (int n=cells[ind]; n >= 0; n=next[n]) {
+                for (particle_t* nbr=bins[ind]; nbr!=NULL; nbr=nbr->next) {
+                    // Distance to neighbor n
+                    float dx = nbr->xx - xic;
+                    float dy = nbr->xy - yic;
+                    float dist = dx*dx + dy*dy;
 
-                // Distance to neighbor n
-                float dx = x[2*n+0] - xic;
-                float dy = x[2*n+1] - yic;
-                float dist = dx*dx + dy*dy;
+                    if (dist > 1e-10) {
+                        //===============================================
+                        // force calculation - hertz
+                        if (dist < R2) {
+                            float l   = sqrtf(dist);
+                            float co1 = (1-l/R);
+                            float co  = epsilon * co1*sqrtf(co1);
+                            float c   = co/l;
+                            fx -= c * dx;
+                            fy -= c * dy;
+                        }
 
-                if (dist > 1e-10) {
-                    //===============================================
-                    // force calculation - hertz
-                    if (dist < R2) {
-                        float l   = sqrtf(dist);
-                        float co1 = (1-l/R);
-                        float co  = epsilon * co1*sqrtf(co1);
-                        float c   = co/l;
-                        fx -= c * dx;
-                        fy -= c * dy;
+                        //===============================================
+                        // add up the neighbor velocities
+                        if (is_redi && nbr->type == RED && dist < FR2) {
+                            wx += part[i].vx;
+                            wy += part[i].vy;
+                        }
                     }
-
-                    //===============================================
-                    // add up the neighbor velocities
-                    if (is_redi && type[n] == RED && dist < FR2) {
-                        wx += v[2*n+0];
-                        wy += v[2*n+1];
-                    }
+                    //neighbor = neighbor->next;
                 }
+            } }
+
+            //=====================================
+            // flocking force
+            float wlen2 = wx*wx + wy*wy;
+            if (is_redi && wlen2 > 1e-12) {
+                float c = alpha / sqrtf(wlen2);
+                fx += c * wx;
+                fy += c * wy;
             }
-        } }
 
-        //=====================================
-        // flocking force
-        float wlen2 = wx*wx + wy*wy;
-        if (is_redi && wlen2 > 1e-12) {
-            float c = alpha / sqrtf(wlen2);
-            fx += c * wx;
-            fy += c * wy;
+            //====================================
+            // self-propulsion
+            float vx = part[i].vx;
+            float vy = part[i].vy;
+            float vlen2 = vx*vx + vy*vy;
+            if (vlen2 > 1e-12) {
+                float vhappy = is_redi * vhappy_red;
+                float vlen = sqrtf(vlen2);
+                float c = damp_coeff*(vhappy-vlen)/vlen;
+                fx += c * vx;
+                fy += c * vy;
+            }
+
+            //=======================================
+            // noise term
+            if (is_redi) {
+                // Box-Muller method
+                float u1 = ran_ran2();
+                float u2 = 2*M_PI*ran_ran2();
+                float lfac = sqrtf(-2*log(u1));
+                fx += sigma*lfac*cos(u2);
+                fy += sigma*lfac*sin(u2);
+            }
+
+            part[i].fx = fx;
+            part[i].fy = fy;
         }
-
-        //====================================
-        // self-propulsion
-        float vx = v[2*i+0];
-        float vy = v[2*i+1];
-        float vlen2 = vx*vx + vy*vy;
-        if (vlen2 > 1e-12) {
-            float vhappy = is_redi * vhappy_red;
-            float vlen = sqrtf(vlen2);
-            float c = damp_coeff*(vhappy-vlen)/vlen;
-            fx += c * vx;
-            fy += c * vy;
-        }
-
-        //=======================================
-        // noise term
-        if (is_redi) {
-            // Box-Muller method
-            float u1 = ran_ran2();
-            float u2 = 2*M_PI*ran_ran2();
-            float lfac = sqrtf(-2*log(u1));
-            fx += sigma*lfac*cos(u2);
-            fy += sigma*lfac*sin(u2);
-        }
-
-        f[2*i+0] = fx;
-        f[2*i+1] = fy;
     }
 }
 
@@ -205,25 +202,25 @@ void compute_forces(particles_t* particles, sim_param_t* params)
 
 void leapfrog_step(particles_t* restrict particles, float dt)
 {
-    float* restrict x = particles->x;
-    float* restrict v = particles->v;
-    const float* restrict f = particles->f;
+    particle_t* restrict part = particles->particles;
     int N = particles->N;
     float L = particles->L;
 
     // Integrate the forces
+    //#pragma omp for
     for (int i=0; i<N;i++) {
         // Newton-Stomer-Verlet
-        v[2*i+0] += f[2*i+0] * dt;
-        v[2*i+1] += f[2*i+1] * dt;
+        part[i].vx += part[i].fx * dt;
+        part[i].vy += part[i].fy * dt;
 
-        x[2*i+0] += v[2*i+0] * dt;
-        x[2*i+1] += v[2*i+1] * dt;
+        part[i].xx += part[i].vx * dt;
+        part[i].xy += part[i].vy * dt;
 
         // boundary conditions
-        for (int j=0; j<2; j++) {
-            if (x[2*i+j] >= L*(1-FLT_EPSILON) || x[2*i+j] < FLT_EPSILON)
-                x[2*i+j] = mymod(x[2*i+j], L);
-        }
+        if (part[i].xx >= L*(1-FLT_EPSILON) || part[i].xx < FLT_EPSILON)
+            part[i].xx = mymod(part[i].xx, L);
+        if (part[i].xy >= L*(1-FLT_EPSILON) || part[i].xy < FLT_EPSILON)
+            part[i].xy = mymod(part[i].xy, L);
+
     }
 }
